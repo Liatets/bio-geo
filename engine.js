@@ -1,5 +1,5 @@
 (() => {
-  const STORAGE_KEY = "bio_oge_progress_v2";
+  const STORAGE_KEY = "bio_oge_botanica_v1";
   let progress = {};
   try {
     progress = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
@@ -32,7 +32,6 @@
   const vTheory = document.getElementById("view-theory");
   const vQuiz = document.getElementById("view-quiz");
   const progBox = document.getElementById("prog-box");
-  const lab3dGrid = document.getElementById("lab3d-grid");
   const toolbar = document.getElementById("toolbar");
   const searchIn = document.getElementById("search-in");
   const filterReadyBtn = document.getElementById("filter-ready");
@@ -45,20 +44,6 @@
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => { toastEl.hidden = true; }, 3500);
   }
-
-  async function launch3D(sceneName) {
-    try {
-      const mod = await import("./anat3d.js");
-      mod.openAnat3D(sceneName || "body");
-    } catch (err) {
-      console.error(err);
-      showToast("3D работает через веб-сервер (GitHub Pages или Live Server).");
-    }
-  }
-
-  document.querySelectorAll("[data-open3d]").forEach(btn => {
-    btn.addEventListener("click", () => launch3D(btn.dataset.open3d));
-  });
 
   document.querySelectorAll("[data-tab]").forEach(btn => {
     btn.addEventListener("click", () => {
@@ -123,7 +108,6 @@
     renderProgressBar();
     const inSubView = !!activeView;
     progBox.hidden = inSubView;
-    lab3dGrid.hidden = inSubView || currentTab !== "modules";
     toolbar.hidden = inSubView || currentTab === "exam";
     filterReadyBtn.hidden = currentTab !== "modules";
 
@@ -234,14 +218,12 @@
     `;
   }
 
-  // Экран теории: только после прочтения ставится галочка «Изучено»
   function renderTheory() {
     const t = activeTopic;
     const st = progress[t.id] || {};
     vTheory.innerHTML = `
-      <div style="margin-bottom:12px; display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap;">
+      <div style="margin-bottom:12px;">
         <button type="button" class="btn" id="th-back">← Назад к темам</button>
-        ${t.scene3d ? `<button type="button" class="btn primary" id="th-3d">Открыть 3D-модель по теме</button>` : ""}
       </div>
       <div class="sheet">
         <span class="badge" style="margin-bottom:10px; display:inline-block;">Теория · ОГЭ</span>
@@ -259,9 +241,6 @@
       activeView = null; activeTopic = null; render();
     });
 
-    const btn3d = document.getElementById("th-3d");
-    if (btn3d) btn3d.addEventListener("click", () => launch3D(t.scene3d));
-
     document.getElementById("th-done").addEventListener("click", () => {
       progress[t.id] = { ...(progress[t.id] || {}), learned: true };
       saveProgress();
@@ -274,7 +253,6 @@
     });
   }
 
-  // Экран теста: галочка «Повторено» ставится за прохождение теста (>= 75% верных)
   function renderQuiz() {
     const qList = activeTopic.questions;
     if (quizState.idx >= qList.length) {
