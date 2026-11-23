@@ -1,5 +1,5 @@
 (() => {
-  const STORAGE_KEY = "bio_oge_progress_v1";
+  const STORAGE_KEY = "bio_oge_progress_v2";
   let progress = {};
   try {
     progress = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
@@ -20,6 +20,7 @@
   }
 
   let currentTab = "modules";
+  let activeView = null; // null | "theory" | "quiz"
   let activeTopic = null;
   let searchQuery = "";
   let onlyReady = false;
@@ -28,9 +29,10 @@
   const vModules = document.getElementById("view-modules");
   const vChecklist = document.getElementById("view-checklist");
   const vExam = document.getElementById("view-exam");
+  const vTheory = document.getElementById("view-theory");
   const vQuiz = document.getElementById("view-quiz");
   const progBox = document.getElementById("prog-box");
-  const anatBtn = document.getElementById("open-anat-3d");
+  const lab3dGrid = document.getElementById("lab3d-grid");
   const toolbar = document.getElementById("toolbar");
   const searchIn = document.getElementById("search-in");
   const filterReadyBtn = document.getElementById("filter-ready");
@@ -44,17 +46,30 @@
     toastTimer = setTimeout(() => { toastEl.hidden = true; }, 3500);
   }
 
-  // Переключение вкладок
+  async function launch3D(sceneName) {
+    try {
+      const mod = await import("./anat3d.js");
+      mod.openAnat3D(sceneName || "body");
+    } catch (err) {
+      console.error(err);
+      showToast("3D работает через веб-сервер (GitHub Pages или Live Server).");
+    }
+  }
+
+  document.querySelectorAll("[data-open3d]").forEach(btn => {
+    btn.addEventListener("click", () => launch3D(btn.dataset.open3d));
+  });
+
   document.querySelectorAll("[data-tab]").forEach(btn => {
     btn.addEventListener("click", () => {
       currentTab = btn.dataset.tab;
+      activeView = null;
       activeTopic = null;
       document.querySelectorAll("[data-tab]").forEach(b => b.setAttribute("aria-pressed", b.dataset.tab === currentTab));
       render();
     });
   });
 
-  // Поиск и фильтр
   searchIn.addEventListener("input", () => {
     searchQuery = searchIn.value.trim().toLowerCase();
     render();
@@ -65,6 +80,14 @@
     filterReadyBtn.setAttribute("aria-pressed", String(onlyReady));
     render();
   });
+
+  function findTopic(id) {
+    for (const sec of OGE_DATA.sections) {
+      const found = sec.topics.find(t => t.id === id);
+      if (found) return found;
+    }
+    return null;
+  }
 
   function renderProgressBar() {
     const allTopics = OGE_DATA.sections.flatMap(s => s.topics);
@@ -78,8 +101,8 @@
 
     progBox.innerHTML = `
       <div class="prog-top">
-        <span>Изучено тем: ${learned} из ${total} (${pct}%)</span>
-        <span style="color: var(--ink-2)">Повторено: ${repeated}</span>
+        <span>Изучено (теория): ${learned} из ${total} (${pct}%)</span>
+        <span style="color: var(--ok)">Повторено (тесты): ${repeated}</span>
       </div>
       <div class="bar"><i style="width: ${pct}%"></i></div>
     `;
@@ -98,18 +121,20 @@
 
   function render() {
     renderProgressBar();
-    const inQuiz = !!activeTopic;
-    progBox.hidden = inQuiz;
-    anatBtn.hidden = inQuiz || currentTab !== "modules";
-    toolbar.hidden = inQuiz || currentTab === "exam";
+    const inSubView = !!activeView;
+    progBox.hidden = inSubView;
+    lab3dGrid.hidden = inSubView || currentTab !== "modules";
+    toolbar.hidden = inSubView || currentTab === "exam";
     filterReadyBtn.hidden = currentTab !== "modules";
 
-    vModules.hidden = currentTab !== "modules" || inQuiz;
-    vChecklist.hidden = currentTab !== "checklist" || inQuiz;
-    vExam.hidden = currentTab !== "exam" || inQuiz;
-    vQuiz.hidden = !inQuiz;
+    vModules.hidden = currentTab !== "modules" || inSubView;
+    vChecklist.hidden = currentTab !== "checklist" || inSubView;
+    vExam.hidden = currentTab !== "exam" || inSubView;
+    vTheory.hidden = activeView !== "theory";
+    vQuiz.hidden = activeView !== "quiz";
 
-    if (inQuiz) return renderQuiz();
+    if (activeView === "theory") return renderTheory();
+    if (activeView === "quiz") return renderQuiz();
     if (currentTab === "modules") renderModules();
     if (currentTab === "checklist") renderChecklist();
     if (currentTab === "exam") renderExamTable();
@@ -133,13 +158,16 @@
                   <div class="card-title">${t.title}</div>
                   <p class="card-desc">${t.desc}</p>
                   <div class="card-foot">
-                    <div class="checks">
-                      <label><input type="checkbox" data-chk="learned" data-id="${t.id}" ${st.learned ? "checked" : ""}> Изучено</label>
-                      <label><input type="checkbox" data-chk="repeated" data-id="${t.id}" ${st.repeated ? "checked" : ""}> Повторено</label>
+                    <div class="statuses">
+                      <span class="st-pill ${st.learned ? "ok" : ""}">${st.learned ? "✓ Изучено" : "○ Теория"}</span>
+                      <span class="st-pill ${st.repeated ? "ok" : ""}">${st.repeated ? "✓ Повторено" : "○ Тест"}</span>
                     </div>
-                    ${t.ready
-                      ? `<button type="button" class="btn primary" data-open="${t.id}">Решать (${t.questions.length})</button>`
-                      : `<button type="button" class="btn" disabled>Скоро</button>`}
+                    <div class="card-acts">
+                      ${t.ready ? `
+                        <button type="button" class="btn" data-theory="${t.id}">Теория</button>
+                        <button type="button" class="btn primary" data-quiz="${t.id}">Тест (${t.questions.length})</button>
+                      ` : `<button type="button" class="btn" disabled>Скоро</button>`}
+                    </div>
                   </div>
                 </div>
               `;
@@ -149,7 +177,7 @@
       `;
     }).join("");
 
-    vModules.innerHTML = html || `<div class="card"><p class="card-desc">По запросу ничего не найдено. Попробуйте изменить поиск или снять фильтр.</p></div>`;
+    vModules.innerHTML = html || `<div class="card"><p class="card-desc">По запросу ничего не найдено.</p></div>`;
     wireEvents(vModules);
   }
 
@@ -168,10 +196,10 @@
               const st = progress[t.id] || {};
               return `
                 <div class="chk-row">
-                  <span class="chk-name ${st.learned ? "done" : ""}">${t.title}</span>
-                  <div class="checks" style="flex:none;">
-                    <label><input type="checkbox" data-chk="learned" data-id="${t.id}" ${st.learned ? "checked" : ""}> Изуч.</label>
-                    <label><input type="checkbox" data-chk="repeated" data-id="${t.id}" ${st.repeated ? "checked" : ""}> Повт.</label>
+                  <span class="chk-name ${st.learned && st.repeated ? "done" : ""}">${t.title}</span>
+                  <div class="statuses" style="flex:none;">
+                    <span class="st-pill ${st.learned ? "ok" : ""}">${st.learned ? "✓ Изуч." : "Изуч."}</span>
+                    <span class="st-pill ${st.repeated ? "ok" : ""}">${st.repeated ? "✓ Повт." : "Повт."}</span>
                   </div>
                 </div>
               `;
@@ -182,7 +210,6 @@
     }).join("");
 
     vChecklist.innerHTML = html || `<div class="card"><p class="card-desc">Ничего не найдено.</p></div>`;
-    wireEvents(vChecklist);
   }
 
   function renderExamTable() {
@@ -207,27 +234,83 @@
     `;
   }
 
+  // Экран теории: только после прочтения ставится галочка «Изучено»
+  function renderTheory() {
+    const t = activeTopic;
+    const st = progress[t.id] || {};
+    vTheory.innerHTML = `
+      <div style="margin-bottom:12px; display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap;">
+        <button type="button" class="btn" id="th-back">← Назад к темам</button>
+        ${t.scene3d ? `<button type="button" class="btn primary" id="th-3d">Открыть 3D-модель по теме</button>` : ""}
+      </div>
+      <div class="sheet">
+        <span class="badge" style="margin-bottom:10px; display:inline-block;">Теория · ОГЭ</span>
+        <h2 class="q-title">${t.title}</h2>
+        <div class="theory-body">${t.theory || `<p>${t.desc}</p>`}</div>
+        <div style="display:flex; flex-wrap:wrap; gap:8px; margin-top:20px; padding-top:14px; border-top:1px dashed var(--line);">
+          <button type="button" class="btn primary" id="th-done" style="flex:1; padding:12px;">
+            ${st.learned ? "✓ Теория изучена — перейти к тесту" : "Я прочитал(а) теорию ✓ (отметить изученным)"}
+          </button>
+        </div>
+      </div>
+    `;
+
+    document.getElementById("th-back").addEventListener("click", () => {
+      activeView = null; activeTopic = null; render();
+    });
+
+    const btn3d = document.getElementById("th-3d");
+    if (btn3d) btn3d.addEventListener("click", () => launch3D(t.scene3d));
+
+    document.getElementById("th-done").addEventListener("click", () => {
+      progress[t.id] = { ...(progress[t.id] || {}), learned: true };
+      saveProgress();
+      if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred("success");
+      showToast("Галочка «Изучено» поставлена! Теперь закрепи тему в тесте.");
+      activeView = "quiz";
+      quizState = { idx: 0, score: 0, answered: false };
+      render();
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    });
+  }
+
+  // Экран теста: галочка «Повторено» ставится за прохождение теста (>= 75% верных)
   function renderQuiz() {
     const qList = activeTopic.questions;
     if (quizState.idx >= qList.length) {
+      const pct = Math.round((quizState.score / qList.length) * 100);
+      const passed = pct >= 75;
+      if (passed) {
+        progress[activeTopic.id] = { ...(progress[activeTopic.id] || {}), repeated: true };
+        saveProgress();
+      }
       vQuiz.innerHTML = `
         <div class="sheet">
-          <span class="badge">Модуль завершён</span>
-          <h2 class="q-title" style="margin-top:10px;">Результат: ${quizState.score} из ${qList.length}</h2>
-          <p style="color:var(--ink-2)">Отметь тему в чек-листе как «Изучено», чтобы обновить свой прогресс.</p>
+          <span class="badge">${passed ? "Тест сдан ✓" : "Нужно ещё потренироваться"}</span>
+          <h2 class="q-title" style="margin-top:10px;">Результат: ${quizState.score} из ${qList.length} (${pct}%)</h2>
+          <p style="color:var(--ink-2)">
+            ${passed
+              ? "Отлично! Галочка «Повторено» автоматически поставлена в твой чек-лист."
+              : "Чтобы получить галочку «Повторено», нужно ответить верно минимум на 75% вопросов. Повтори теорию и попробуй ещё раз."}
+          </p>
           <div style="display:flex; flex-wrap:wrap; gap:8px; margin-top:16px;">
-            <button type="button" class="btn primary" id="q-mark-done">Отметить изученной ✓</button>
+            <button type="button" class="btn primary" id="q-retry">Пройти ещё раз</button>
+            <button type="button" class="btn" id="q-theory">Открыть теорию</button>
             <button type="button" class="btn" id="q-back">← К темам</button>
           </div>
         </div>
       `;
-      document.getElementById("q-mark-done").addEventListener("click", () => {
-        progress[activeTopic.id] = { ...(progress[activeTopic.id] || {}), learned: true };
-        saveProgress();
-        activeTopic = null;
+      document.getElementById("q-retry").addEventListener("click", () => {
+        quizState = { idx: 0, score: 0, answered: false };
+        renderQuiz();
+      });
+      document.getElementById("q-theory").addEventListener("click", () => {
+        activeView = "theory";
         render();
       });
-      document.getElementById("q-back").addEventListener("click", () => { activeTopic = null; render(); });
+      document.getElementById("q-back").addEventListener("click", () => {
+        activeView = null; activeTopic = null; render();
+      });
       return;
     }
 
@@ -253,7 +336,10 @@
       </div>
     `;
 
-    document.getElementById("q-exit").addEventListener("click", () => { activeTopic = null; render(); });
+    document.getElementById("q-exit").addEventListener("click", () => {
+      activeView = null; activeTopic = null; render();
+    });
+
     vQuiz.querySelectorAll("[data-opt]").forEach(btn => {
       btn.addEventListener("click", () => {
         if (quizState.answered) return;
@@ -275,7 +361,7 @@
         document.getElementById("q-feedback").innerHTML = `
           ${item.trap ? `<div class="trap"><b>Ловушка ОГЭ</b>${item.trap}</div>` : ""}
           <button type="button" class="btn primary" id="q-next" style="margin-top:14px; width:100%; padding:12px;">
-            ${quizState.idx + 1 < qList.length ? "Следующий вопрос →" : "Завершить модуль"}
+            ${quizState.idx + 1 < qList.length ? "Следующий вопрос →" : "Завершить тест"}
           </button>
         `;
         document.getElementById("q-next").addEventListener("click", () => {
@@ -288,44 +374,29 @@
   }
 
   function wireEvents(container) {
-    container.querySelectorAll("[data-chk]").forEach(chk => {
-      chk.addEventListener("change", () => {
-        const id = chk.dataset.id;
-        const type = chk.dataset.chk;
-        progress[id] = { ...(progress[id] || {}), [type]: chk.checked };
-        saveProgress();
-        renderProgressBar();
-        if (currentTab === "checklist") renderChecklist();
-      });
-    });
-
-    container.querySelectorAll("[data-open]").forEach(btn => {
+    container.querySelectorAll("[data-theory]").forEach(btn => {
       btn.addEventListener("click", () => {
-        const id = btn.dataset.open;
-        for (const sec of OGE_DATA.sections) {
-          const found = sec.topics.find(t => t.id === id);
-          if (found) {
-            activeTopic = found;
-            quizState = { idx: 0, score: 0, answered: false };
-            render();
-            window.scrollTo({ top: 0, behavior: "smooth" });
-            break;
-          }
+        const found = findTopic(btn.dataset.theory);
+        if (found) {
+          activeTopic = found;
+          activeView = "theory";
+          render();
+          window.scrollTo({ top: 0, behavior: "smooth" });
         }
       });
     });
-  }
 
-  // Кнопка 3D-анатомии (ленивая загрузка модуля)
-  if (anatBtn) {
-    anatBtn.addEventListener("click", async () => {
-      try {
-        const mod = await import("./anat3d.js");
-        mod.openAnat3D();
-      } catch (err) {
-        console.error(err);
-        showToast("3D работает через веб-сервер (GitHub Pages или Live Server).");
-      }
+    container.querySelectorAll("[data-quiz]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const found = findTopic(btn.dataset.quiz);
+        if (found) {
+          activeTopic = found;
+          activeView = "quiz";
+          quizState = { idx: 0, score: 0, answered: false };
+          render();
+          window.scrollTo({ top: 0, behavior: "smooth" });
+        }
+      });
     });
   }
 
